@@ -1,4 +1,4 @@
-name: Build Aksara renamed package and patched parsers
+name: Build Aksara release-only with MangaK and HotComics patches and renamed
 
 on:
   push:
@@ -118,7 +118,7 @@ jobs:
 
           cat settings.gradle
 
-      - name: Patch Aksara app identity, authorities, signing, and icon
+      - name: Patch Aksara app identity, sync authorities, signing, and icon
         working-directory: Kotatsu
         shell: bash
         run: |
@@ -130,10 +130,10 @@ jobs:
           import re
           from PIL import Image, ImageOps
 
-          APP_ID_OLD = "org.koitharu.kotatsu"
           APP_ID_NEW = "org.felzard.aksara"
           APP_NAME = "Aksara"
 
+          # 1) Change install identity.
           build = Path("app/build.gradle")
           text = build.read_text(encoding="utf-8")
 
@@ -144,8 +144,7 @@ jobs:
               count=1,
           )
 
-          # Release variant, signed with debug keystore only so CI artifact is installable.
-          # This is still assembleRelease, not assembleDebug.
+          # Still release build; debug keystore only makes the CI artifact installable.
           if "release {\n\t\t\tsigningConfig signingConfigs.debug" not in text:
               text = text.replace(
                   "release {\n\t\t\tminifyEnabled true",
@@ -155,6 +154,7 @@ jobs:
 
           build.write_text(text, encoding="utf-8")
 
+          # 2) Change app label.
           for path in [
               Path("app/src/main/res/values/strings.xml"),
               Path("app/src/debug/res/values/strings.xml"),
@@ -171,22 +171,53 @@ jobs:
               path.write_text(s, encoding="utf-8")
               print(f"patched app_name: {path}")
 
-          # Fix resource-defined provider/account authorities and account types.
-          # Do NOT rename Kotlin class packages in AndroidManifest/classes.
-          for base in [Path("app/src/main/res"), Path("app/src/debug/res")]:
-              if not base.exists():
+          # 3) Fix ONLY string resources used as account/sync/provider authorities.
+          # Do NOT globally replace org.koitharu.kotatsu in res XML.
+          # Layout XML contains custom view class names such as org.koitharu.kotatsu.*.
+          replacements = {
+              "account_type_sync": "org.felzard.aksara.sync",
+              "sync_authority_favourites": "org.felzard.aksara.sync.favourites",
+              "sync_authority_history": "org.felzard.aksara.sync.history",
+          }
+
+          found = set()
+          values_dirs = []
+          for src_set in [Path("app/src/main/res"), Path("app/src/debug/res")]:
+              if not src_set.exists():
                   continue
+              values_dirs.extend([p for p in src_set.iterdir() if p.is_dir() and p.name.startswith("values")])
 
-              for path in base.rglob("*"):
-                  if path.suffix.lower() != ".xml":
-                      continue
-
+          for values_dir in values_dirs:
+              for path in values_dir.glob("*.xml"):
                   s = path.read_text(encoding="utf-8")
-                  ns = s.replace(APP_ID_OLD, APP_ID_NEW)
+                  ns = s
+
+                  for name, value in replacements.items():
+                      pattern = rf'(<string\s+name="{re.escape(name)}"[^>]*>).*?(</string>)'
+                      ns2, count = re.subn(pattern, rf'\g<1>{value}\2', ns)
+                      if count:
+                          found.add(name)
+                          ns = ns2
+
                   if ns != s:
                       path.write_text(ns, encoding="utf-8")
-                      print(f"patched resource identity: {path}")
+                      print(f"patched sync authority strings: {path}")
 
+          missing = set(replacements) - found
+          if missing:
+              # Create only missing definitions. If upstream already has them, the regex above patches them.
+              out = Path("app/src/main/res/values/aksara_sync_authorities.xml")
+              body = [
+                  '<?xml version="1.0" encoding="utf-8"?>',
+                  '<resources>',
+              ]
+              for name in sorted(missing):
+                  body.append(f'    <string name="{name}" translatable="false">{replacements[name]}</string>')
+              body.append('</resources>')
+              out.write_text("\n".join(body) + "\n", encoding="utf-8")
+              print(f"created missing sync authority strings: {out} -> {sorted(missing)}")
+
+          # 4) Replace launcher icon. Delete old .webp/.png first to avoid duplicate resources.
           icon_path = Path("patches/icon.png")
           if not icon_path.exists():
               raise SystemExit("Missing patches/icon.png")
@@ -211,7 +242,6 @@ jobs:
               out_dir = Path(f"app/src/main/res/mipmap-{density}")
               out_dir.mkdir(parents=True, exist_ok=True)
 
-              # Android treats ic_launcher.png and ic_launcher.webp as duplicate resources.
               for stem in names:
                   for ext in ("png", "webp", "jpg", "jpeg"):
                       old = out_dir / f"{stem}.{ext}"
