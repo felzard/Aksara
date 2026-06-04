@@ -1,4 +1,4 @@
-name: Build Kotatsu with MangaK patch
+name: Build Aksara with MangaK and HotComics patches
 
 on:
   push:
@@ -24,10 +24,14 @@ jobs:
     env:
       PARSER_REPO: ${{ github.event.inputs.parser_repo || 'KotatsuApp/kotatsu-parsers' }}
       PARSER_REF: ${{ github.event.inputs.parser_ref || 'master' }}
-      TARGET_PARSER_FILE: src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt
+      AKSARA_APPLICATION_ID: org.felzard.aksara
+      AKSARA_APP_NAME: Aksara
+      TARGET_MANGAPUMA: src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt
+      TARGET_HOTCOMICS: src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/en/HotComics.kt
+      TARGET_HOTCOMICS_PARSER: src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/HotComicsParser.kt
 
     steps:
-      - name: Checkout Kotatsu
+      - name: Checkout Aksara
         uses: actions/checkout@v4
         with:
           path: Kotatsu
@@ -39,36 +43,76 @@ jobs:
           ref: ${{ env.PARSER_REF }}
           path: kotatsu-parsers
 
-      - name: Verify patch file exists
+      - name: Verify patch files exist
         shell: bash
         run: |
           set -euo pipefail
 
-          if [ ! -f "Kotatsu/patches/MangaPuma.kt" ]; then
-            echo "Missing Kotatsu/patches/MangaPuma.kt"
-            echo "Create patches/MangaPuma.kt in your Kotatsu repo first."
-            exit 1
-          fi
+          test -f Kotatsu/patches/MangaPuma.kt || { echo "Missing patches/MangaPuma.kt"; exit 1; }
+          test -f Kotatsu/patches/HotComics.kt || { echo "Missing patches/HotComics.kt"; exit 1; }
+          test -f Kotatsu/patches/HotComicsParser.kt || { echo "Missing patches/HotComicsParser.kt"; exit 1; }
+          test -f Kotatsu/patches/icon.png || { echo "Missing patches/icon.png"; exit 1; }
 
           grep -q '@MangaSourceParser("MANGAPUMA", "MangaK", "en")' Kotatsu/patches/MangaPuma.kt
+          grep -q '@MangaSourceParser("HOTCOMICS", "HotComics", "en")' Kotatsu/patches/HotComics.kt
 
-      - name: Patch MangaPuma parser
+      - name: Patch kotatsu-parsers sources
         shell: bash
         run: |
           set -euo pipefail
 
-          TARGET="kotatsu-parsers/${TARGET_PARSER_FILE}"
+          cp "kotatsu-parsers/${TARGET_MANGAPUMA}" "kotatsu-parsers/${TARGET_MANGAPUMA}.bak"
+          cp "kotatsu-parsers/${TARGET_HOTCOMICS}" "kotatsu-parsers/${TARGET_HOTCOMICS}.bak"
+          cp "kotatsu-parsers/${TARGET_HOTCOMICS_PARSER}" "kotatsu-parsers/${TARGET_HOTCOMICS_PARSER}.bak"
 
-          if [ ! -f "$TARGET" ]; then
-            echo "Target parser does not exist: $TARGET"
-            exit 1
-          fi
+          cp Kotatsu/patches/MangaPuma.kt "kotatsu-parsers/${TARGET_MANGAPUMA}"
+          cp Kotatsu/patches/HotComics.kt "kotatsu-parsers/${TARGET_HOTCOMICS}"
+          cp Kotatsu/patches/HotComicsParser.kt "kotatsu-parsers/${TARGET_HOTCOMICS_PARSER}"
 
-          cp "$TARGET" "$TARGET.bak"
-          cp Kotatsu/patches/MangaPuma.kt "$TARGET"
+          echo "MangaPuma patch preview:"
+          sed -n '1,40p' "kotatsu-parsers/${TARGET_MANGAPUMA}"
+          echo "HotComics patch preview:"
+          sed -n '1,60p' "kotatsu-parsers/${TARGET_HOTCOMICS}"
 
-          echo "Patched parser preview:"
-          sed -n '1,80p' "$TARGET"
+      - name: Rebrand as separate Aksara app
+        working-directory: Kotatsu
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          app_id = "org.felzard.aksara"
+          app_name = "Aksara"
+
+          gradle = Path("app/build.gradle")
+          s = gradle.read_text()
+          s = re.sub(r"applicationId\s+['\"]org\.koitharu\.kotatsu['\"]", f"applicationId '{app_id}'", s)
+          gradle.write_text(s)
+
+          strings = Path("app/src/main/res/values/strings.xml")
+          s = strings.read_text()
+          s = re.sub(r'(<string name="app_name"[^>]*>).*?(</string>)', rf'\1{app_name}\2', s)
+          strings.write_text(s)
+
+          manifest = Path("app/src/main/AndroidManifest.xml")
+          s = manifest.read_text()
+          s = s.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/aksara_icon"')
+          s = s.replace('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@drawable/aksara_icon"')
+          manifest.write_text(s)
+          PY
+
+          mkdir -p app/src/main/res/drawable
+          cp patches/icon.png app/src/main/res/drawable/aksara_icon.png
+
+          echo "Patched applicationId:"
+          grep -n "applicationId" app/build.gradle | head
+          echo "Patched app_name:"
+          grep -n 'name="app_name"' app/src/main/res/values/strings.xml
+          echo "Patched manifest icon:"
+          grep -n 'android:icon\|android:roundIcon' app/src/main/AndroidManifest.xml
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -83,17 +127,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           set +o pipefail
           yes | sdkmanager --licenses >/dev/null
           set -o pipefail
-
           sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "platform-tools"
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Wire Kotatsu to patched local kotatsu-parsers
+      - name: Wire Aksara to patched local kotatsu-parsers
         working-directory: Kotatsu
         shell: bash
         run: |
@@ -121,13 +163,16 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: kotatsu-mangak-debug-apk
+          name: aksara-mangak-hotcomics-debug-apk
           path: Kotatsu/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
 
-      - name: Upload patched parser source
+      - name: Upload patched parser sources
         uses: actions/upload-artifact@v4
         with:
-          name: patched-MangaPuma-source
-          path: kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt
+          name: patched-parser-sources
+          path: |
+            kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt
+            kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/en/HotComics.kt
+            kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/HotComicsParser.kt
           if-no-files-found: error
