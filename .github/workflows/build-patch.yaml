@@ -1,4 +1,4 @@
-name: Build Aksara with MangaK and HotComics patches
+name: Build Aksara release with parser patches
 
 on:
   push:
@@ -24,11 +24,6 @@ jobs:
     env:
       PARSER_REPO: ${{ github.event.inputs.parser_repo || 'KotatsuApp/kotatsu-parsers' }}
       PARSER_REF: ${{ github.event.inputs.parser_ref || 'master' }}
-      AKSARA_APPLICATION_ID: org.felzard.aksara
-      AKSARA_APP_NAME: Aksara
-      TARGET_MANGAPUMA: src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt
-      TARGET_HOTCOMICS: src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/en/HotComics.kt
-      TARGET_HOTCOMICS_PARSER: src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/HotComicsParser.kt
 
     steps:
       - name: Checkout Aksara
@@ -43,76 +38,45 @@ jobs:
           ref: ${{ env.PARSER_REF }}
           path: kotatsu-parsers
 
-      - name: Verify patch files exist
+      - name: Verify patch files
         shell: bash
         run: |
           set -euo pipefail
 
-          test -f Kotatsu/patches/MangaPuma.kt || { echo "Missing patches/MangaPuma.kt"; exit 1; }
-          test -f Kotatsu/patches/HotComics.kt || { echo "Missing patches/HotComics.kt"; exit 1; }
-          test -f Kotatsu/patches/HotComicsParser.kt || { echo "Missing patches/HotComicsParser.kt"; exit 1; }
-          test -f Kotatsu/patches/icon.png || { echo "Missing patches/icon.png"; exit 1; }
+          test -f Kotatsu/patches/MangaPuma.kt
+          test -f Kotatsu/patches/HotComics.kt
+          test -f Kotatsu/patches/HotComicsParser.kt
+          test -f Kotatsu/patches/icon.png
 
           grep -q '@MangaSourceParser("MANGAPUMA", "MangaK", "en")' Kotatsu/patches/MangaPuma.kt
           grep -q '@MangaSourceParser("HOTCOMICS", "HotComics", "en")' Kotatsu/patches/HotComics.kt
 
-      - name: Patch kotatsu-parsers sources
+      - name: Patch MangaPuma and HotComics parsers
         shell: bash
         run: |
           set -euo pipefail
 
-          cp "kotatsu-parsers/${TARGET_MANGAPUMA}" "kotatsu-parsers/${TARGET_MANGAPUMA}.bak"
-          cp "kotatsu-parsers/${TARGET_HOTCOMICS}" "kotatsu-parsers/${TARGET_HOTCOMICS}.bak"
-          cp "kotatsu-parsers/${TARGET_HOTCOMICS_PARSER}" "kotatsu-parsers/${TARGET_HOTCOMICS_PARSER}.bak"
+          MANGAPUMA_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt"
+          HOTCOMICS_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/en/HotComics.kt"
+          HOTCOMICS_BASE_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/HotComicsParser.kt"
 
-          cp Kotatsu/patches/MangaPuma.kt "kotatsu-parsers/${TARGET_MANGAPUMA}"
-          cp Kotatsu/patches/HotComics.kt "kotatsu-parsers/${TARGET_HOTCOMICS}"
-          cp Kotatsu/patches/HotComicsParser.kt "kotatsu-parsers/${TARGET_HOTCOMICS_PARSER}"
+          test -f "$MANGAPUMA_TARGET"
+          test -f "$HOTCOMICS_TARGET"
+          test -f "$HOTCOMICS_BASE_TARGET"
 
-          echo "MangaPuma patch preview:"
-          sed -n '1,40p' "kotatsu-parsers/${TARGET_MANGAPUMA}"
-          echo "HotComics patch preview:"
-          sed -n '1,60p' "kotatsu-parsers/${TARGET_HOTCOMICS}"
+          cp "$MANGAPUMA_TARGET" "$MANGAPUMA_TARGET.bak"
+          cp "$HOTCOMICS_TARGET" "$HOTCOMICS_TARGET.bak"
+          cp "$HOTCOMICS_BASE_TARGET" "$HOTCOMICS_BASE_TARGET.bak"
 
-      - name: Rebrand as separate Aksara app
-        working-directory: Kotatsu
-        shell: bash
-        run: |
-          set -euo pipefail
+          cp Kotatsu/patches/MangaPuma.kt "$MANGAPUMA_TARGET"
+          cp Kotatsu/patches/HotComics.kt "$HOTCOMICS_TARGET"
+          cp Kotatsu/patches/HotComicsParser.kt "$HOTCOMICS_BASE_TARGET"
 
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+          echo "MangaPuma preview:"
+          sed -n '1,50p' "$MANGAPUMA_TARGET"
 
-          app_id = "org.felzard.aksara"
-          app_name = "Aksara"
-
-          gradle = Path("app/build.gradle")
-          s = gradle.read_text()
-          s = re.sub(r"applicationId\s+['\"]org\.koitharu\.kotatsu['\"]", f"applicationId '{app_id}'", s)
-          gradle.write_text(s)
-
-          strings = Path("app/src/main/res/values/strings.xml")
-          s = strings.read_text()
-          s = re.sub(r'(<string name="app_name"[^>]*>).*?(</string>)', rf'\1{app_name}\2', s)
-          strings.write_text(s)
-
-          manifest = Path("app/src/main/AndroidManifest.xml")
-          s = manifest.read_text()
-          s = s.replace('android:icon="@mipmap/ic_launcher"', 'android:icon="@drawable/aksara_icon"')
-          s = s.replace('android:roundIcon="@mipmap/ic_launcher_round"', 'android:roundIcon="@drawable/aksara_icon"')
-          manifest.write_text(s)
-          PY
-
-          mkdir -p app/src/main/res/drawable
-          cp patches/icon.png app/src/main/res/drawable/aksara_icon.png
-
-          echo "Patched applicationId:"
-          grep -n "applicationId" app/build.gradle | head
-          echo "Patched app_name:"
-          grep -n 'name="app_name"' app/src/main/res/values/strings.xml
-          echo "Patched manifest icon:"
-          grep -n 'android:icon\|android:roundIcon' app/src/main/AndroidManifest.xml
+          echo "HotComics preview:"
+          sed -n '1,80p' "$HOTCOMICS_TARGET"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -127,9 +91,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           set +o pipefail
           yes | sdkmanager --licenses >/dev/null
           set -o pipefail
+
           sdkmanager --install "platforms;android-36" "build-tools;35.0.0" "platform-tools"
 
       - name: Setup Gradle
@@ -152,19 +118,112 @@ jobs:
 
           cat settings.gradle
 
-      - name: Build debug APK
+      - name: Brand Aksara and make release installable
+        working-directory: Kotatsu
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          build = Path("app/build.gradle")
+          text = build.read_text(encoding="utf-8")
+
+          text = re.sub(
+              r"applicationId\s+'org\.koitharu\.kotatsu'",
+              "applicationId 'org.felzard.aksara'",
+              text,
+              count=1,
+          )
+
+          if "release {\n\t\t\tsigningConfig signingConfigs.debug" not in text:
+              text = text.replace(
+                  "release {\n\t\t\tminifyEnabled true",
+                  "release {\n\t\t\tsigningConfig signingConfigs.debug\n\t\t\tminifyEnabled true",
+                  1,
+              )
+
+          build.write_text(text, encoding="utf-8")
+
+          for path in [
+              Path("app/src/main/res/values/strings.xml"),
+              Path("app/src/debug/res/values/strings.xml"),
+          ]:
+              if not path.exists():
+                  continue
+              s = path.read_text(encoding="utf-8")
+              s = re.sub(
+                  r'<string name="app_name"[^>]*>.*?</string>',
+                  '<string name="app_name" translatable="false">Aksara</string>',
+                  s,
+                  count=1,
+              )
+              path.write_text(s, encoding="utf-8")
+              print(f"Patched app name in {path}")
+
+          print("Patched app/build.gradle:")
+          print(build.read_text(encoding="utf-8"))
+          PY
+
+      - name: Replace launcher icon
+        working-directory: Kotatsu
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -m pip install --user pillow
+
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          src_path = Path("patches/icon.png")
+          if not src_path.exists():
+              raise SystemExit("Missing patches/icon.png")
+
+          src = Image.open(src_path).convert("RGBA")
+
+          densities = {
+              "mdpi": 108,
+              "hdpi": 162,
+              "xhdpi": 216,
+              "xxhdpi": 324,
+              "xxxhdpi": 432,
+          }
+
+          for density, size in densities.items():
+              out_dir = Path(f"app/src/main/res/mipmap-{density}")
+              out_dir.mkdir(parents=True, exist_ok=True)
+
+              canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
+              icon = ImageOps.contain(src, (size, size), Image.Resampling.LANCZOS)
+              canvas.alpha_composite(icon, ((size - icon.width) // 2, (size - icon.height) // 2))
+
+              for name in [
+                  "ic_launcher.png",
+                  "ic_launcher_round.png",
+                  "ic_launcher_foreground.png",
+              ]:
+                  canvas.save(out_dir / name)
+
+              print(f"Wrote icon resources for {density}")
+          PY
+
+      - name: Build release APK
         working-directory: Kotatsu
         shell: bash
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace --no-daemon
+          ./gradlew assembleRelease --stacktrace --no-daemon
 
-      - name: Upload APK
+      - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: aksara-mangak-hotcomics-debug-apk
-          path: Kotatsu/app/build/outputs/apk/debug/*.apk
+          name: aksara-mangak-hotcomics-release-apk
+          path: Kotatsu/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: Upload patched parser sources
