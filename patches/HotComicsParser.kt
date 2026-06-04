@@ -10,29 +10,8 @@ import org.jsoup.nodes.Element
 import org.koitharu.kotatsu.parsers.MangaLoaderContext
 import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
-import org.koitharu.kotatsu.parsers.model.ContentRating
-import org.koitharu.kotatsu.parsers.model.Manga
-import org.koitharu.kotatsu.parsers.model.MangaChapter
-import org.koitharu.kotatsu.parsers.model.MangaListFilter
-import org.koitharu.kotatsu.parsers.model.MangaListFilterCapabilities
-import org.koitharu.kotatsu.parsers.model.MangaListFilterOptions
-import org.koitharu.kotatsu.parsers.model.MangaPage
-import org.koitharu.kotatsu.parsers.model.MangaParserSource
-import org.koitharu.kotatsu.parsers.model.MangaState
-import org.koitharu.kotatsu.parsers.model.MangaTag
-import org.koitharu.kotatsu.parsers.model.RATING_UNKNOWN
-import org.koitharu.kotatsu.parsers.model.SortOrder
-import org.koitharu.kotatsu.parsers.network.UserAgents
-import org.koitharu.kotatsu.parsers.util.generateUid
-import org.koitharu.kotatsu.parsers.util.mapChapters
-import org.koitharu.kotatsu.parsers.util.mapNotNullToSet
-import org.koitharu.kotatsu.parsers.util.oneOrThrowIfMany
-import org.koitharu.kotatsu.parsers.util.parseHtml
-import org.koitharu.kotatsu.parsers.util.parseSafe
-import org.koitharu.kotatsu.parsers.util.requireSrc
-import org.koitharu.kotatsu.parsers.util.src
-import org.koitharu.kotatsu.parsers.util.toAbsoluteUrl
-import org.koitharu.kotatsu.parsers.util.urlEncoded
+import org.koitharu.kotatsu.parsers.model.*
+import org.koitharu.kotatsu.parsers.util.*
 import java.text.SimpleDateFormat
 import java.util.EnumSet
 
@@ -46,8 +25,8 @@ internal abstract class HotComicsParser(
 	override val configKeyDomain = ConfigKey.Domain(domain)
 
 	override fun getRequestHeaders(): Headers = Headers.Builder()
-		.add("User-Agent", UserAgents.CHROME_DESKTOP)
-		.add("Referer", "https://${domain.substringBefore('/')}/")
+		.add("User-Agent", config[userAgentKey])
+		.add("Referer", "https://$domain/")
 		.add("Cookie", "hc_vfs=Y")
 		.build()
 
@@ -69,8 +48,10 @@ internal abstract class HotComicsParser(
 		availableTags = fetchAvailableTags(),
 	)
 
+	protected open val homeUrl = "/"
+	protected open val latestUrl = "/new"
+	protected open val searchUrl = "/search"
 	protected open val mangasUrl = "/genres"
-
 	protected open val onePage = false
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
@@ -81,12 +62,30 @@ internal abstract class HotComicsParser(
 		val url = buildString {
 			append("https://")
 			append(domain)
+
 			when {
 				!filter.query.isNullOrEmpty() -> {
-					append("/search?keyword=")
+					append(searchUrl)
+					append("?keyword=")
 					append(filter.query.urlEncoded())
 					append("&page=")
 					append(page)
+				}
+
+				filter.tags.isEmpty() && order == SortOrder.NEWEST -> {
+					append(latestUrl)
+					if (!onePage) {
+						append("?page=")
+						append(page)
+					}
+				}
+
+				filter.tags.isEmpty() -> {
+					append(homeUrl)
+					if (!onePage) {
+						append("?page=")
+						append(page)
+					}
 				}
 
 				else -> {
@@ -103,83 +102,120 @@ internal abstract class HotComicsParser(
 				}
 			}
 		}
+
 		val tagMap = getOrCreateTagMap()
 		return parseMangaList(webClient.httpGet(url).parseHtml(), tagMap)
 	}
 
-	protected open val selectMangas = "li[itemtype*=ComicSeries]:not(.no-comic)"
+	protected open val selectMangas = "li[itemtype*=ComicSeries]:not(.no-comic) > a"
 
 	protected open fun parseMangaList(doc: Document, tagMap: ArrayMap<String, MangaTag>): List<Manga> {
-		return doc.select(selectMangas).mapNotNull { li ->
-			val a = li.selectFirst("a") ?: return@mapNotNull null
-			val href = a.attr("href")
-
-			val url = if (href.startsWith("/")) {
-				"/" + href.removePrefix("/").substringAfter('/')
-			} else {
-				href
+		return doc.select(selectMangas).mapNotNull { a ->
+			val rawUrl = a.absUrl("href").ifEmpty { a.attr("href") }
+			val url = normalizeSourcePath(rawUrl)
+			if (url.isEmpty()) {
+				return@mapNotNull null
 			}
 
-			val tags = li.select(".etc span").mapNotNullToSet { tagMap[it.text()] }
-			val isNsfwSource = a.selectFirst(".ico-18plus") != null
-			val author = li.selectFirst(".writer")?.text().orEmpty()
+			val tags = a.select(".etc span").mapNotNullToSet { tagMap[it.text()] }
+			val isAdult = a.selectFirst(".ico-18plus") != null
+			val author = a.selectFirst(".writer")?.text().orEmpty()
 
 			Manga(
 				id = generateUid(url),
 				url = url,
-				publicUrl = url.toAbsoluteUrl(domain),
-				coverUrl = li.selectFirst("img")?.imageSrc(),
-				title = li.selectFirst(".title")?.text().orEmpty(),
+				publicUrl = sitePath(url).toAbsoluteUrl(domain),
+				coverUrl = a.selectFirst("img")?.imgAttr(),
+				title = a.selectFirst(".title")?.text()
+					?: a.selectFirst("div.main-text > h4.title")?.text()
+					?: a.text(),
 				altTitles = emptySet(),
 				rating = RATING_UNKNOWN,
-				description = li.selectFirst("p[itemprop*=description]")?.text().orEmpty(),
+				description = a.selectFirst("p[itemprop*=description]")?.text().orEmpty(),
 				tags = tags,
-				authors = setOf(author).filterTo(HashSet()) { it.isNotBlank() },
-				state = if (li.selectFirst(".ico_fin") != null) {
+				authors = setOfNotNull(author.takeIf { it.isNotBlank() }),
+				state = if (a.selectFirst(".ico_fin") != null) {
 					MangaState.FINISHED
 				} else {
 					MangaState.ONGOING
 				},
 				source = source,
-				contentRating = if (isNsfwSource) ContentRating.ADULT else null,
+				contentRating = if (isAdult || isNsfwSource) ContentRating.ADULT else null,
 			)
-		}
+		}.distinctBy { it.id }
 	}
 
-	protected open val selectMangaChapters = "#tab-chapter li"
+	protected open val selectMangaChapters = "#tab-chapter a"
 	protected open val datePattern = "MMM dd, yyyy"
 
 	override suspend fun getDetails(manga: Manga): Manga {
-		val mangaUrl = manga.url.toAbsoluteUrl(domain)
+		val mangaUrl = sitePath(manga.url).toAbsoluteUrl(domain)
 		val redirectHeaders = Headers.Builder()
-			.set("Referer", "https://${domain.substringBefore('/')}/")
+			.set("Referer", mangaUrl)
 			.set("Cookie", "hc_vfs=Y")
 			.build()
+
 		val doc = webClient.httpGet(mangaUrl, redirectHeaders).parseHtml()
 		val dateFormat = SimpleDateFormat(datePattern, sourceLocale)
+
+		val title = doc.selectFirst("h2.episode-title")?.text() ?: manga.title
+		val info = doc.selectFirst("p.type_box")
+
+		val author = info?.selectFirst("span.writer")?.text()
+			?.substringAfter("ⓒ")
+			?.trim()
+			?.takeIf { it.isNotBlank() }
+
+		val state = when (info?.selectFirst("span.date")?.text()) {
+			"End", "Ende" -> MangaState.FINISHED
+			null -> manga.state
+			else -> MangaState.ONGOING
+		}
+
+		val description = buildString {
+			doc.selectFirst("div.episode-contents header")
+				?.text()
+				?.takeIf { it.isNotBlank() }
+				?.let {
+					append(it)
+					append("\n\n")
+				}
+
+			doc.selectFirst("div.title_content > h2:not(.episode-title)")
+				?.text()
+				?.takeIf { it.isNotBlank() }
+				?.let { append(it) }
+		}.trim().takeIf { it.isNotBlank() } ?: manga.description
+
 		return manga.copy(
-			description = doc.selectFirst("div.title_content_box h2")?.text() ?: manga.description,
+			title = title,
+			description = description,
+			authors = setOfNotNull(author).ifEmpty { manga.authors },
+			state = state,
 			chapters = doc.select(selectMangaChapters)
-				.mapChapters(reversed = true) { i, li ->
-					val a = li.selectFirst("a") ?: return@mapChapters null
-					val href = a.attr("href")
-					val url = if (href.startsWith("/")) {
-						"/" + href.removePrefix("/").substringAfter('/')
-					} else if (href.startsWith("javascript")) {
-						val h = a.attr("onclick").substringAfterLast("href='").substringBefore("'")
-						"/" + h.removePrefix("/").substringAfter('/')
-					} else {
-						href
+				.mapChapters(reversed = true) { i, a ->
+					val rawUrl = a.attr("onclick")
+						.substringAfter("popupLogin('")
+						.substringBefore("'")
+						.takeIf { it.isNotBlank() }
+						?: a.attr("href")
+
+					val url = normalizeSourcePath(rawUrl)
+					if (url.isEmpty()) {
+						return@mapChapters null
 					}
-					val chapterNum = li.selectFirst(".num")?.text()?.toFloatOrNull() ?: (i + 1f)
+
+					val name = a.selectFirst(".cell-num")?.text()
+					val chapterNum = a.selectFirst(".num")?.text()?.toFloatOrNull() ?: (i + 1f)
+
 					MangaChapter(
 						id = generateUid(url),
-						title = null,
+						title = name,
 						number = chapterNum,
 						volume = 0,
 						url = url,
 						scanlator = null,
-						uploadDate = dateFormat.parseSafe(li.selectFirst("time")?.attr("datetime")),
+						uploadDate = dateFormat.parseSafe(a.selectFirst(".cell-time")?.text()),
 						branch = null,
 						source = source,
 					)
@@ -190,25 +226,21 @@ internal abstract class HotComicsParser(
 	protected open val selectPages = "#viewer-img img"
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
-		val fullUrl = chapter.url.toAbsoluteUrl(domain)
+		val fullUrl = sitePath(chapter.url).toAbsoluteUrl(domain)
 		val doc = webClient.httpGet(fullUrl).parseHtml()
-		return doc.select(selectPages).mapIndexed { index, img ->
-			val url = img.imageSrc() ?: img.requireSrc()
+		return doc.select(selectPages).mapIndexedNotNull { _, img ->
+			val url = img.imgAttr()
+			if (url.isBlank()) {
+				return@mapIndexedNotNull null
+			}
+
 			MangaPage(
-				id = generateUid("$url#$index"),
+				id = generateUid(url),
 				url = url,
 				preview = null,
 				source = source,
 			)
 		}
-	}
-
-	private fun Element.imageSrc(): String? {
-		val dataSrc = attr("data-src").takeIf { it.isNotBlank() }
-		if (dataSrc != null) {
-			return dataSrc.toAbsoluteUrl(domain.substringBefore('/'))
-		}
-		return runCatching { src() }.getOrNull()
 	}
 
 	private suspend fun fetchAvailableTags(): Set<MangaTag> {
@@ -227,6 +259,7 @@ internal abstract class HotComicsParser(
 
 	protected open suspend fun getOrCreateTagMap(): ArrayMap<String, MangaTag> = mutex.withLock {
 		tagCache?.let { return@withLock it }
+
 		val doc = webClient.httpGet("https://$domain$mangasUrl").parseHtml()
 		val tagItems = doc.select(selectTagsList)
 		val result = ArrayMap<String, MangaTag>(tagItems.size)
@@ -239,5 +272,38 @@ internal abstract class HotComicsParser(
 		}
 		tagCache = result
 		result
+	}
+
+	private fun sitePath(path: String): String {
+		val normalized = normalizeSourcePath(path)
+		return if (normalized.startsWith("/en/") || normalized == "/en") {
+			normalized
+		} else {
+			"/en$normalized"
+		}
+	}
+
+	private fun normalizeSourcePath(raw: String): String {
+		return raw
+			.substringBefore('#')
+			.substringBefore('?')
+			.removePrefix("https://hotcomics.me")
+			.removePrefix("http://hotcomics.me")
+			.removePrefix("https://www.hotcomics.me")
+			.removePrefix("http://www.hotcomics.me")
+			.let { if (it.startsWith("/")) it else "/$it" }
+			.let {
+				if (it.startsWith("/en/")) {
+					"/" + it.removePrefix("/en/")
+				} else {
+					it
+				}
+			}
+			.removeSuffix("/")
+	}
+
+	private fun Element.imgAttr(): String = when {
+		hasAttr("data-src") -> absUrl("data-src")
+		else -> absUrl("src")
 	}
 }

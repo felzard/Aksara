@@ -7,28 +7,8 @@ import org.koitharu.kotatsu.parsers.MangaSourceParser
 import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.exception.ParseException
-import org.koitharu.kotatsu.parsers.model.ContentRating
-import org.koitharu.kotatsu.parsers.model.ContentType
-import org.koitharu.kotatsu.parsers.model.Manga
-import org.koitharu.kotatsu.parsers.model.MangaChapter
-import org.koitharu.kotatsu.parsers.model.MangaListFilter
-import org.koitharu.kotatsu.parsers.model.MangaListFilterCapabilities
-import org.koitharu.kotatsu.parsers.model.MangaListFilterOptions
-import org.koitharu.kotatsu.parsers.model.MangaPage
-import org.koitharu.kotatsu.parsers.model.MangaParserSource
-import org.koitharu.kotatsu.parsers.model.MangaState
-import org.koitharu.kotatsu.parsers.model.MangaTag
-import org.koitharu.kotatsu.parsers.model.RATING_UNKNOWN
-import org.koitharu.kotatsu.parsers.model.SortOrder
-import org.koitharu.kotatsu.parsers.util.generateUid
-import org.koitharu.kotatsu.parsers.util.mapChapters
-import org.koitharu.kotatsu.parsers.util.oneOrThrowIfMany
-import org.koitharu.kotatsu.parsers.util.parseHtml
-import org.koitharu.kotatsu.parsers.util.parseJson
-import org.koitharu.kotatsu.parsers.util.parseSafe
-import org.koitharu.kotatsu.parsers.util.toAbsoluteUrl
-import org.koitharu.kotatsu.parsers.util.toTitleCase
-import org.koitharu.kotatsu.parsers.util.urlBuilder
+import org.koitharu.kotatsu.parsers.model.*
+import org.koitharu.kotatsu.parsers.util.*
 import org.koitharu.kotatsu.parsers.util.json.asTypedList
 import org.koitharu.kotatsu.parsers.util.json.getFloatOrDefault
 import org.koitharu.kotatsu.parsers.util.json.getStringOrNull
@@ -84,58 +64,53 @@ internal class MangaPuma(context: MangaLoaderContext) :
 	}
 
 	override suspend fun getListPage(page: Int, order: SortOrder, filter: MangaListFilter): List<Manga> {
-		val url = urlBuilder()
-			.scheme("https")
-			.host(API_DOMAIN)
-			.addPathSegment("titles")
-			.addPathSegment("search")
-			.addQueryParameter("page", page.toString())
-			.addQueryParameter("limit", PAGE_SIZE.toString())
+		val url = buildString {
+			append("https://")
+			append(API_DOMAIN)
+			append("/titles/search?page=")
+			append(page)
+			append("&limit=")
+			append(PAGE_SIZE)
 
-		when (order) {
-			SortOrder.POPULARITY -> {
-				url.addQueryParameter("sort", "popular")
-				url.addQueryParameter("window", "week")
+			when (order) {
+				SortOrder.POPULARITY -> append("&sort=popular&window=week")
+				SortOrder.UPDATED,
+				SortOrder.NEWEST -> append("&sort=latest")
+				else -> append("&sort=latest")
 			}
-			SortOrder.UPDATED,
-			SortOrder.NEWEST -> {
-				url.addQueryParameter("sort", "latest")
+
+			filter.query?.takeIf { it.isNotBlank() }?.let {
+				append("&q=")
+				append(it.urlEncoded())
 			}
-			else -> {
-				url.addQueryParameter("sort", "latest")
+
+			filter.states.oneOrThrowIfMany()?.let {
+				append("&status=")
+				append(
+					when (it) {
+						MangaState.ONGOING -> "ongoing"
+						MangaState.FINISHED -> "completed"
+						MangaState.PAUSED -> "hiatus"
+						MangaState.ABANDONED -> "cancelled"
+						else -> return@let
+					},
+				)
+			}
+
+			filter.types.forEach {
+				append("&type=")
+				append(
+					when (it) {
+						ContentType.MANGA -> "manga"
+						ContentType.MANHWA -> "manhwa"
+						ContentType.MANHUA -> "manhua"
+						else -> return@forEach
+					},
+				)
 			}
 		}
 
-		filter.query?.takeIf { it.isNotBlank() }?.let {
-			url.addQueryParameter("q", it)
-		}
-
-		filter.states.oneOrThrowIfMany()?.let {
-			url.addQueryParameter(
-				"status",
-				when (it) {
-					MangaState.ONGOING -> "ongoing"
-					MangaState.FINISHED -> "completed"
-					MangaState.PAUSED -> "hiatus"
-					MangaState.ABANDONED -> "cancelled"
-					else -> return@let
-				},
-			)
-		}
-
-		filter.types.forEach {
-			url.addQueryParameter(
-				"type",
-				when (it) {
-					ContentType.MANGA -> "manga"
-					ContentType.MANHWA -> "manhwa"
-					ContentType.MANHUA -> "manhua"
-					else -> return@forEach
-				},
-			)
-		}
-
-		val root = webClient.httpGet(url.build()).parseJson()
+		val root = webClient.httpGet(url).parseJson()
 		val items = root.optJSONObject("data")?.optJSONArray("items") ?: return emptyList()
 
 		return items.mapJSON { it.toManga() }
