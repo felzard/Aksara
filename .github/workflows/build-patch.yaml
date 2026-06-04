@@ -1,4 +1,4 @@
-name: Build Aksara release with parser patches
+name: Build Aksara release-only with MangaK and HotComics patches
 
 on:
   push:
@@ -217,12 +217,47 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew assembleRelease --stacktrace --no-daemon
+          ./gradlew clean assembleRelease --stacktrace --no-daemon
+
+      - name: Verify APK is release and branded
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          APK="$(find Kotatsu/app/build/outputs/apk/release -name '*.apk' -type f | head -n 1)"
+          if [ -z "$APK" ]; then
+            echo "No release APK found"
+            exit 1
+          fi
+
+          echo "Release APK: $APK"
+
+          if find Kotatsu/app/build/outputs/apk/debug -name '*.apk' -type f 2>/dev/null | grep -q .; then
+            echo "Debug APK exists. Refusing upload."
+            find Kotatsu/app/build/outputs/apk/debug -name '*.apk' -type f -print
+            exit 1
+          fi
+
+          BADGING="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "$APK")"
+          echo "$BADGING" | head -n 20
+
+          echo "$BADGING" | grep -q "package: name='org.felzard.aksara'"
+          echo "$BADGING" | grep -q "application-label:'Aksara'"
+
+          if echo "$BADGING" | grep -q "org.koitharu.kotatsu"; then
+            echo "Wrong package: still Kotatsu"
+            exit 1
+          fi
+
+          if echo "$BADGING" | grep -q "org.felzard.aksara.debug"; then
+            echo "Wrong package: still debug applicationIdSuffix"
+            exit 1
+          fi
 
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
-          name: aksara-mangak-hotcomics-release-apk
+          name: aksara-release-only-apk
           path: Kotatsu/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
