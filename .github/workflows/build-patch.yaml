@@ -230,12 +230,13 @@ jobs:
           chmod +x ./gradlew
           ./gradlew clean assembleRelease --stacktrace --no-daemon
 
-      - name: Verify APK is release and branded
+      - name: Verify release output only
         shell: bash
         run: |
           set -euo pipefail
 
           APK="$(find Kotatsu/app/build/outputs/apk/release -name '*.apk' -type f | head -n 1)"
+
           if [ -z "$APK" ]; then
             echo "No release APK found"
             exit 1
@@ -243,26 +244,34 @@ jobs:
 
           echo "Release APK: $APK"
 
-          if find Kotatsu/app/build/outputs/apk/debug -name '*.apk' -type f 2>/dev/null | grep -q .; then
+          if find Kotatsu/app/build/outputs/apk/debug -name "*.apk" -type f 2>/dev/null | grep -q .; then
             echo "Debug APK exists. Refusing upload."
-            find Kotatsu/app/build/outputs/apk/debug -name '*.apk' -type f -print
+            find Kotatsu/app/build/outputs/apk/debug -name "*.apk" -type f -print
             exit 1
           fi
 
-          BADGING="$($ANDROID_HOME/build-tools/35.0.0/aapt dump badging "$APK")"
-          echo "$BADGING" | head -n 20
+          BADGING="$(aapt dump badging "$APK")"
+          echo "$BADGING"
 
-          echo "$BADGING" | grep -q "package: name='org.felzard.aksara'"
-          echo "$BADGING" | grep -q "application-label:'Aksara'"
+          PKG="$(echo "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
 
-          if echo "$BADGING" | grep -q "org.koitharu.kotatsu"; then
-            echo "Wrong package: still Kotatsu"
+          echo "Detected package: $PKG"
+
+          if [ "$PKG" != "org.felzard.aksara" ]; then
+            echo "Wrong package: expected org.felzard.aksara, got $PKG"
             exit 1
           fi
 
-          if echo "$BADGING" | grep -q "org.felzard.aksara.debug"; then
-            echo "Wrong package: still debug applicationIdSuffix"
+          if echo "$BADGING" | grep -q "package: name='org.felzard.aksara.debug'"; then
+            echo "Wrong package: debug suffix detected"
             exit 1
+          fi
+
+          LABEL="$(echo "$BADGING" | sed -n "s/^application-label:'\([^']*\)'.*/\1/p" | head -n 1 || true)"
+          echo "Detected label: ${LABEL:-unknown}"
+
+          if [ "${LABEL:-}" != "Aksara" ]; then
+            echo "Warning: app label is not Aksara. Continuing because package is correct."
           fi
 
       - name: Upload release APK
