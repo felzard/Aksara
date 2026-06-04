@@ -250,7 +250,17 @@ jobs:
             exit 1
           fi
 
-          BADGING="$(aapt dump badging "$APK")"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -n 1)"
+
+          if [ -z "$AAPT" ]; then
+            echo "aapt not found under $ANDROID_HOME/build-tools"
+            find "$ANDROID_HOME" -maxdepth 4 -type f -name 'aapt*' || true
+            exit 1
+          fi
+
+          echo "Using aapt: $AAPT"
+
+          BADGING="$("$AAPT" dump badging "$APK")"
           echo "$BADGING"
 
           PKG="$(echo "$BADGING" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
@@ -262,7 +272,7 @@ jobs:
             exit 1
           fi
 
-          if echo "$BADGING" | grep -q "package: name='org.felzard.aksara.debug'"; then
+          if [ "$PKG" = "org.felzard.aksara.debug" ]; then
             echo "Wrong package: debug suffix detected"
             exit 1
           fi
@@ -273,7 +283,7 @@ jobs:
           if [ "${LABEL:-}" != "Aksara" ]; then
             echo "Warning: app label is not Aksara. Continuing because package is correct."
           fi
-
+          
       - name: Upload release APK
         uses: actions/upload-artifact@v4
         with:
