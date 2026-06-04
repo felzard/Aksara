@@ -193,22 +193,33 @@ jobs:
               "xxxhdpi": 432,
           }
 
+          names = (
+              "ic_launcher",
+              "ic_launcher_round",
+              "ic_launcher_foreground",
+          )
+
           for density, size in densities.items():
               out_dir = Path(f"app/src/main/res/mipmap-{density}")
               out_dir.mkdir(parents=True, exist_ok=True)
+
+              # Kotatsu already has launcher .webp files.
+              # Same basename + different extension = duplicate Android resource.
+              for stem in names:
+                  for ext in ("png", "webp", "jpg", "jpeg"):
+                      old = out_dir / f"{stem}.{ext}"
+                      if old.exists():
+                          old.unlink()
+                          print(f"deleted old resource: {old}")
 
               canvas = Image.new("RGBA", (size, size), (255, 255, 255, 0))
               icon = ImageOps.contain(src, (size, size), Image.Resampling.LANCZOS)
               canvas.alpha_composite(icon, ((size - icon.width) // 2, (size - icon.height) // 2))
 
-              for name in [
-                  "ic_launcher.png",
-                  "ic_launcher_round.png",
-                  "ic_launcher_foreground.png",
-              ]:
-                  canvas.save(out_dir / name)
-
-              print(f"Wrote icon resources for {density}")
+              for stem in names:
+                  out = out_dir / f"{stem}.png"
+                  canvas.save(out)
+                  print(f"wrote {out}")
           PY
 
       - name: Build release APK
