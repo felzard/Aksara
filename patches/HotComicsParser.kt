@@ -12,6 +12,7 @@ import org.koitharu.kotatsu.parsers.config.ConfigKey
 import org.koitharu.kotatsu.parsers.core.PagedMangaParser
 import org.koitharu.kotatsu.parsers.model.*
 import org.koitharu.kotatsu.parsers.util.*
+import java.net.URI
 import java.text.SimpleDateFormat
 import java.util.EnumSet
 
@@ -151,6 +152,7 @@ internal abstract class HotComicsParser(
 	override suspend fun getDetails(manga: Manga): Manga {
 		val mangaUrl = sitePath(manga.url).toAbsoluteUrl(domain)
 		val redirectHeaders = Headers.Builder()
+			.set("User-Agent", config[userAgentKey])
 			.set("Referer", mangaUrl)
 			.set("Cookie", "hc_vfs=Y")
 			.build()
@@ -194,12 +196,7 @@ internal abstract class HotComicsParser(
 			state = state,
 			chapters = doc.select(selectMangaChapters)
 				.mapChapters(reversed = true) { i, a ->
-					val rawUrl = a.attr("onclick")
-						.substringAfter("popupLogin('")
-						.substringBefore("'")
-						.takeIf { it.isNotBlank() }
-						?: a.attr("href")
-
+					val rawUrl = a.extractChapterUrl()
 					val url = normalizeSourcePath(rawUrl)
 					if (url.isEmpty()) {
 						return@mapChapters null
@@ -227,7 +224,13 @@ internal abstract class HotComicsParser(
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val fullUrl = sitePath(chapter.url).toAbsoluteUrl(domain)
-		val doc = webClient.httpGet(fullUrl).parseHtml()
+		val headers = Headers.Builder()
+			.set("User-Agent", config[userAgentKey])
+			.set("Referer", fullUrl)
+			.set("Cookie", "hc_vfs=Y")
+			.build()
+
+		val doc = webClient.httpGet(fullUrl, headers).parseHtml()
 		return doc.select(selectPages).mapIndexedNotNull { _, img ->
 			val url = img.imgAttr()
 			if (url.isBlank()) {
@@ -265,7 +268,7 @@ internal abstract class HotComicsParser(
 		val result = ArrayMap<String, MangaTag>(tagItems.size)
 		for (item in tagItems) {
 			val title = item.text()
-			val key = item.attr("href").substringAfterLast('/')
+			val key = normalizeSourcePath(item.attr("href")).substringAfterLast('/')
 			if (key.isNotEmpty() && title.isNotEmpty()) {
 				result[title] = MangaTag(title = title, key = key, source = source)
 			}
@@ -276,7 +279,9 @@ internal abstract class HotComicsParser(
 
 	private fun sitePath(path: String): String {
 		val normalized = normalizeSourcePath(path)
-		return if (normalized.startsWith("/en/") || normalized == "/en") {
+		return if (normalized.isEmpty()) {
+			"/en"
+		} else if (normalized.startsWith("/en/") || normalized == "/en") {
 			normalized
 		} else {
 			"/en$normalized"
@@ -284,22 +289,61 @@ internal abstract class HotComicsParser(
 	}
 
 	private fun normalizeSourcePath(raw: String): String {
-		return raw
+		var value = raw
+			.trim()
 			.substringBefore('#')
 			.substringBefore('?')
-			.removePrefix("https://hotcomics.me")
-			.removePrefix("http://hotcomics.me")
-			.removePrefix("https://www.hotcomics.me")
-			.removePrefix("http://www.hotcomics.me")
-			.let { if (it.startsWith("/")) it else "/$it" }
-			.let {
-				if (it.startsWith("/en/")) {
-					"/" + it.removePrefix("/en/")
-				} else {
-					it
-				}
+			.trim()
+
+		if (value.isBlank() || value == "#") {
+			return ""
+		}
+
+		// Repair previously broken/stored paths like:
+		// /https:/w1.hotcomics.me/en/suicide-boy/ongDK9jF.html
+		if (value.startsWith("/https:/") || value.startsWith("/http:/")) {
+			value = value.removePrefix("/")
+		}
+		if (value.startsWith("https:/") && !value.startsWith("https://")) {
+			value = "https://" + value.removePrefix("https:/").removePrefix("/")
+		}
+		if (value.startsWith("http:/") && !value.startsWith("http://")) {
+			value = "http://" + value.removePrefix("http:/").removePrefix("/")
+		}
+
+		// Strip any HotComics host, including w1.hotcomics.me, w2.hotcomics.me, etc.
+		if (value.startsWith("http://") || value.startsWith("https://")) {
+			val uri = runCatching { URI(value) }.getOrNull()
+			val host = uri?.host.orEmpty().lowercase()
+
+			if (host == "hotcomics.me" || host.endsWith(".hotcomics.me")) {
+				value = uri?.rawPath.orEmpty()
 			}
-			.removeSuffix("/")
+		}
+
+		if (value.isBlank()) {
+			return ""
+		}
+
+		value = if (value.startsWith("/")) value else "/$value"
+
+		// Store internally without /en prefix so chapter IDs stay stable.
+		if (value.startsWith("/en/")) {
+			value = "/" + value.removePrefix("/en/")
+		}
+
+		return value.removeSuffix("/")
+	}
+
+	private fun Element.extractChapterUrl(): String {
+		val onclickUrl = attr("onclick")
+			.substringAfter("popupLogin('", "")
+			.substringBefore("'", "")
+			.trim()
+			.takeIf { it.isNotBlank() && it != "#" && !it.startsWith("javascript:", ignoreCase = true) }
+
+		return onclickUrl
+			?: absUrl("href").ifEmpty { attr("href") }
 	}
 
 	private fun Element.imgAttr(): String = when {
