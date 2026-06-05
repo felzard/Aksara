@@ -162,21 +162,20 @@ jobs:
               count=1,
           )
 
-          if "aksaraRelease {" not in text:
-              text = text.replace(
-                  "buildTypes {",
-                  """signingConfigs {
-          aksaraRelease {
-              storeFile file('../ci-signing/aksara.keystore')
-              storePassword System.getenv('AKSARA_KEYSTORE_PASSWORD')
-              keyAlias System.getenv('AKSARA_KEY_ALIAS')
-              keyPassword System.getenv('AKSARA_KEY_PASSWORD')
-          }
-      }
+          signing_block = (
+              "signingConfigs {\n"
+              "\t\taksaraRelease {\n"
+              "\t\t\tstoreFile file('../ci-signing/aksara.keystore')\n"
+              "\t\t\tstorePassword System.getenv('AKSARA_KEYSTORE_PASSWORD')\n"
+              "\t\t\tkeyAlias System.getenv('AKSARA_KEY_ALIAS')\n"
+              "\t\t\tkeyPassword System.getenv('AKSARA_KEY_PASSWORD')\n"
+              "\t\t}\n"
+              "\t}\n\n"
+              "\tbuildTypes {"
+          )
 
-      buildTypes {""",
-                  1,
-              )
+          if "aksaraRelease {" not in text:
+              text = text.replace("buildTypes {", signing_block, 1)
 
           text = text.replace(
               "signingConfig signingConfigs.debug\n\t\t\tminifyEnabled true",
