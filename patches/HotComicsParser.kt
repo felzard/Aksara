@@ -195,7 +195,7 @@ internal abstract class HotComicsParser(
 			authors = setOfNotNull(author).ifEmpty { manga.authors },
 			state = state,
 			chapters = doc.select(selectMangaChapters)
-				.mapChapters(reversed = true) { i, a ->
+				.mapChapters { i, a ->
 					val rawUrl = a.extractChapterUrl()
 					val url = normalizeSourcePath(rawUrl)
 					if (url.isEmpty()) {
@@ -203,7 +203,7 @@ internal abstract class HotComicsParser(
 					}
 
 					val name = a.selectFirst(".cell-num")?.text()
-					val chapterNum = a.selectFirst(".num")?.text()?.toFloatOrNull() ?: (i + 1f)
+					val chapterNum = a.extractChapterNumber(i)
 
 					MangaChapter(
 						id = generateUid(url),
@@ -216,7 +216,8 @@ internal abstract class HotComicsParser(
 						branch = null,
 						source = source,
 					)
-				},
+				}
+				.sortedBy { it.number },
 		)
 	}
 
@@ -333,6 +334,20 @@ internal abstract class HotComicsParser(
 		}
 
 		return value.removeSuffix("/")
+	}
+
+	private fun Element.extractChapterNumber(fallbackIndex: Int): Float {
+		val text = listOfNotNull(
+			selectFirst(".num")?.text(),
+			selectFirst(".cell-num")?.text(),
+			ownText(),
+		).joinToString(" ")
+
+		return Regex("""\d+(?:\.\d+)?""")
+			.find(text)
+			?.value
+			?.toFloatOrNull()
+			?: (fallbackIndex + 1f)
 	}
 
 	private fun Element.extractChapterUrl(): String {
