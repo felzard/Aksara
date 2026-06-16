@@ -217,30 +217,6 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		addQueryParameter("contentRating[]", "pornographic")
 	}
 
-	private fun preferredMangaDexLanguages(): List<String> {
-		val langs = context.getPreferredLocales()
-			.mapNotNull { locale ->
-				when (val lang = locale.language) {
-					"in" -> "id"
-					"" -> null
-					else -> lang
-				}
-			}
-			.distinct()
-		return langs.ifEmpty { listOf(LOCALE_FALLBACK) }
-	}
-
-	private fun HttpUrl.Builder.addAvailableTranslatedLanguages() {
-		preferredMangaDexLanguages().forEach { lang ->
-			addQueryParameter("availableTranslatedLanguage[]", lang)
-		}
-	}
-
-	private fun HttpUrl.Builder.addTranslatedLanguages() {
-		preferredMangaDexLanguages().forEach { lang ->
-			addQueryParameter("translatedLanguage[]", lang)
-		}
-	}
 
 	private fun HttpUrl.Builder.addMangaOrder(order: SortOrder) {
 		when (order) {
@@ -268,7 +244,6 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			.addQueryParameter("includes[]", "cover_art")
 			.addQueryParameter("includes[]", "author")
 			.addQueryParameter("includes[]", "artist")
-			.apply { addAvailableTranslatedLanguages() }
 			.addQueryParameter("includedTagsMode", "AND")
 			.addQueryParameter("excludedTagsMode", "OR")
 
@@ -503,7 +478,6 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			.addQueryParameter("limit", limitedLimit.toString())
 			.addQueryParameter("includes[]", "scanlation_group")
 			.addQueryParameter("includes[]", "user")
-			.apply { addTranslatedLanguages() }
 			.addQueryParameter("order[volume]", "asc")
 			.addQueryParameter("order[chapter]", "asc")
 			.addQueryParameter("includeFuturePublishAt", "0")
