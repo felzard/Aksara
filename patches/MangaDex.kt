@@ -44,7 +44,6 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		.add("User-Agent", config[userAgentKey])
 		.add("Referer", "https://$domain/")
 		.add("Origin", "https://$domain")
-		.add("X-MangaDex-Client", "Aksara")
 		.add("Extra", "Android/Kotatsu MangaDex/Aksara")
 		.build()
 
@@ -348,13 +347,21 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 	}
 
-	private suspend fun fetchAvailableLocales(): Set<Locale> {
+	private suspend fun fetchAvailableLocales(): Set<Locale> = runCatching {
 		val head = webClient.httpGet("https://$domain/").parseHtml().head()
-		return head.getElementsByAttributeValue("property", "og:locale:alternate")
+		head.getElementsByAttributeValue("property", "og:locale:alternate")
 			.mapNotNullToSet { meta ->
 				val raw = meta.attrOrNull("content") ?: return@mapNotNullToSet null
 				Locale(raw.substringBefore('_'), raw.substringAfter('_', ""))
 			}
+	}.getOrElse {
+		setOf(
+			Locale.ENGLISH,
+			Locale.JAPANESE,
+			Locale.KOREAN,
+			Locale.CHINESE,
+			Locale("id"),
+		)
 	}
 
 	private fun JSONObject.fetchManga(chapters: List<MangaChapter>?): Manga {
@@ -363,21 +370,21 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		val relations = getJSONArray("relationships").associateByKey("type")
 		val cover = relations["cover_art"]
 			?.firstOrNull()
-			?.getJSONObject("attributes")
-			?.getString("fileName")
+			?.optJSONObject("attributes")
+			?.getStringOrNull("fileName")
 			?.let {
 				"https://uploads.$domain/covers/$id/$it"
 			}
-		val authors: Set<String> = (relations["author"] ?: relations["artist"])
-			?.mapNotNullToSet {
-				it.getJSONObject("attributes")?.getStringOrNull("name")
-			}.orEmpty()
+		val authors: Set<String> = (relations["author"].orEmpty() + relations["artist"].orEmpty())
+			.mapNotNullToSet {
+				it.optJSONObject("attributes")?.getStringOrNull("name")
+			}
 
 		return Manga(
 			id = generateUid(id),
-			title = requireNotNull(attrs.getJSONObject("title").selectByLocale()) {
-				"Title should not be null"
-			},
+			title = attrs.getJSONObject("title").selectByLocale()
+				?: attrs.getJSONObject("title").entries<String>().firstOrNull()?.value
+				?: id,
 			altTitles = setOfNotNull(attrs.optJSONArray("altTitles")?.flatten()?.selectByLocale()), // TODO
 			url = id,
 			publicUrl = "https://$domain/title/$id",
@@ -391,7 +398,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			coverUrl = cover?.plus(".256.jpg"),
 			largeCoverUrl = cover,
 			description = attrs.optJSONObject("description")?.selectByLocale(),
-			tags = attrs.getJSONArray("tags").mapJSONToSet { tag ->
+			tags = attrs.optJSONArray("tags")?.mapJSONToSet { tag ->
 				MangaTag(
 					title = tag.getJSONObject("attributes")
 						.getJSONObject("name")
@@ -400,7 +407,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 					key = tag.getString("id"),
 					source = source,
 				)
-			},
+			}.orEmpty(),
 			state = when (attrs.getStringOrNull("status")) {
 				"ongoing" -> MangaState.ONGOING
 				"completed" -> MangaState.FINISHED
