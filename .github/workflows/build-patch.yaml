@@ -46,12 +46,14 @@ jobs:
           test -f Kotatsu/patches/MangaPuma.kt
           test -f Kotatsu/patches/HotComics.kt
           test -f Kotatsu/patches/HotComicsParser.kt
+          test -f Kotatsu/patches/MangaDex.kt
           test -f Kotatsu/patches/icon.png
 
           grep -q '@MangaSourceParser("MANGAPUMA", "MangaK", "en")' Kotatsu/patches/MangaPuma.kt
           grep -q '@MangaSourceParser("HOTCOMICS", "HotComics", "en")' Kotatsu/patches/HotComics.kt
+          grep -q '@MangaSourceParser("MANGADEX", "MangaDex")' Kotatsu/patches/MangaDex.kt
 
-      - name: Patch MangaPuma and HotComics parsers
+      - name: Patch MangaPuma, HotComics, and MangaDex parsers
         shell: bash
         run: |
           set -euo pipefail
@@ -59,24 +61,31 @@ jobs:
           MANGAPUMA_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt"
           HOTCOMICS_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/en/HotComics.kt"
           HOTCOMICS_BASE_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/HotComicsParser.kt"
+          MANGADEX_TARGET="kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/all/MangaDexParser.kt"
 
           test -f "$MANGAPUMA_TARGET"
           test -f "$HOTCOMICS_TARGET"
           test -f "$HOTCOMICS_BASE_TARGET"
+          test -f "$MANGADEX_TARGET"
 
           cp "$MANGAPUMA_TARGET" "$MANGAPUMA_TARGET.bak"
           cp "$HOTCOMICS_TARGET" "$HOTCOMICS_TARGET.bak"
           cp "$HOTCOMICS_BASE_TARGET" "$HOTCOMICS_BASE_TARGET.bak"
+          cp "$MANGADEX_TARGET" "$MANGADEX_TARGET.bak"
 
           cp Kotatsu/patches/MangaPuma.kt "$MANGAPUMA_TARGET"
           cp Kotatsu/patches/HotComics.kt "$HOTCOMICS_TARGET"
           cp Kotatsu/patches/HotComicsParser.kt "$HOTCOMICS_BASE_TARGET"
+          cp Kotatsu/patches/MangaDex.kt "$MANGADEX_TARGET"
 
           echo "MangaPuma preview:"
           sed -n '1,50p' "$MANGAPUMA_TARGET"
 
           echo "HotComics preview:"
           sed -n '1,80p' "$HOTCOMICS_TARGET"
+
+          echo "MangaDex preview:"
+          sed -n '1,80p' "$MANGADEX_TARGET"
 
       - name: Setup JDK 17
         uses: actions/setup-java@v4
@@ -415,4 +424,5 @@ jobs:
             kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/madtheme/en/MangaPuma.kt
             kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/en/HotComics.kt
             kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/hotcomics/HotComicsParser.kt
+            kotatsu-parsers/src/main/kotlin/org/koitharu/kotatsu/parsers/site/all/MangaDexParser.kt
           if-no-files-found: error
