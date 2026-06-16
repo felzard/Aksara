@@ -41,7 +41,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 	override val configKeyDomain = ConfigKey.Domain("mangadex.org")
 
 	override fun getRequestHeaders(): Headers = Headers.Builder()
-		.add("User-Agent", config[userAgentKey])
+		.add("User-Agent", "Aksara " + (System.getProperty("http.agent") ?: "Android"))
 		.add("Referer", "https://$domain/")
 		.add("Origin", "https://$domain")
 		.add("Extra", "Android/Kotatsu MangaDex/Aksara")
@@ -217,6 +217,31 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		addQueryParameter("contentRating[]", "pornographic")
 	}
 
+	private fun preferredMangaDexLanguages(): List<String> {
+		val langs = context.getPreferredLocales()
+			.mapNotNull { locale ->
+				when (val lang = locale.language) {
+					"in" -> "id"
+					"" -> null
+					else -> lang
+				}
+			}
+			.distinct()
+		return langs.ifEmpty { listOf(LOCALE_FALLBACK) }
+	}
+
+	private fun HttpUrl.Builder.addAvailableTranslatedLanguages() {
+		preferredMangaDexLanguages().forEach { lang ->
+			addQueryParameter("availableTranslatedLanguage[]", lang)
+		}
+	}
+
+	private fun HttpUrl.Builder.addTranslatedLanguages() {
+		preferredMangaDexLanguages().forEach { lang ->
+			addQueryParameter("translatedLanguage[]", lang)
+		}
+	}
+
 	private fun HttpUrl.Builder.addMangaOrder(order: SortOrder) {
 		when (order) {
 			SortOrder.UPDATED -> addQueryParameter("order[latestUploadedChapter]", "desc")
@@ -243,6 +268,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			.addQueryParameter("includes[]", "cover_art")
 			.addQueryParameter("includes[]", "author")
 			.addQueryParameter("includes[]", "artist")
+			.apply { addAvailableTranslatedLanguages() }
 			.addQueryParameter("includedTagsMode", "AND")
 			.addQueryParameter("excludedTagsMode", "OR")
 
@@ -347,22 +373,22 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 	}
 
-	private suspend fun fetchAvailableLocales(): Set<Locale> = runCatching {
-		val head = webClient.httpGet("https://$domain/").parseHtml().head()
-		head.getElementsByAttributeValue("property", "og:locale:alternate")
-			.mapNotNullToSet { meta ->
-				val raw = meta.attrOrNull("content") ?: return@mapNotNullToSet null
-				Locale(raw.substringBefore('_'), raw.substringAfter('_', ""))
-			}
-	}.getOrElse {
-		setOf(
-			Locale.ENGLISH,
-			Locale.JAPANESE,
-			Locale.KOREAN,
-			Locale.CHINESE,
-			Locale("id"),
-		)
-	}
+	private suspend fun fetchAvailableLocales(): Set<Locale> = setOf(
+		Locale.ENGLISH,
+		Locale.JAPANESE,
+		Locale.KOREAN,
+		Locale.CHINESE,
+		Locale("id"),
+		Locale("es"),
+		Locale("fr"),
+		Locale("de"),
+		Locale("pt"),
+		Locale("ru"),
+		Locale("it"),
+		Locale("vi"),
+		Locale("th"),
+	)
+
 
 	private fun JSONObject.fetchManga(chapters: List<MangaChapter>?): Manga {
 		val id = getString("id")
@@ -476,8 +502,10 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		val url = "https://api.$domain/manga/$mangaId/feed".toHttpUrl().newBuilder()
 			.addQueryParameter("limit", limitedLimit.toString())
 			.addQueryParameter("includes[]", "scanlation_group")
-			.addQueryParameter("order[volume]", "asc")
-			.addQueryParameter("order[chapter]", "asc")
+			.addQueryParameter("includes[]", "user")
+			.apply { addTranslatedLanguages() }
+			.addQueryParameter("order[volume]", "desc")
+			.addQueryParameter("order[chapter]", "desc")
 			.addQueryParameter("includeFuturePublishAt", "0")
 			.addQueryParameter("includeEmptyPages", "0")
 			.addQueryParameter("includeFutureUpdates", "0")
