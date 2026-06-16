@@ -156,14 +156,14 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 
 	private fun SearchableField.toParamName(): String = when (this) {
 		TITLE_NAME -> "title"
-		TAG -> "includedTags[]"
-		AUTHOR -> "authors[]"
-		STATE -> "status[]"
-		CONTENT_TYPE -> "contentType[]"
-		CONTENT_RATING -> "contentRating[]"
-		DEMOGRAPHIC -> "publicationDemographic[]"
-		ORIGINAL_LANGUAGE -> "originalLanguage[]"
-		LANGUAGE -> "availableTranslatedLanguage[]"
+		TAG -> "includedTags%5B%5D"
+		AUTHOR -> "authors%5B%5D"
+		STATE -> "status%5B%5D"
+		CONTENT_TYPE -> "contentType%5B%5D"
+		CONTENT_RATING -> "contentRating%5B%5D"
+		DEMOGRAPHIC -> "publicationDemographic%5B%5D"
+		ORIGINAL_LANGUAGE -> "originalLanguage%5B%5D"
+		LANGUAGE -> "availableTranslatedLanguage%5B%5D"
 		PUBLICATION_YEAR -> "year"
 	}
 
@@ -196,20 +196,20 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		}
 
 		is SortOrder -> when (this) {
-			SortOrder.UPDATED -> "[latestUploadedChapter]=desc"
-			SortOrder.UPDATED_ASC -> "[latestUploadedChapter]=asc"
-			SortOrder.RATING -> "[rating]=desc"
-			SortOrder.RATING_ASC -> "[rating]=asc"
-			SortOrder.ALPHABETICAL -> "[title]=asc"
-			SortOrder.ALPHABETICAL_DESC -> "[title]=desc"
-			SortOrder.NEWEST -> "[year]=desc"
-			SortOrder.NEWEST_ASC -> "[year]=asc"
-			SortOrder.POPULARITY -> "[followedCount]=desc"
-			SortOrder.POPULARITY_ASC -> "[followedCount]=asc"
-			SortOrder.ADDED -> "[createdAt]=desc"
-			SortOrder.ADDED_ASC -> "[createdAt]=asc"
-			SortOrder.RELEVANCE -> "[relevance]=desc"
-			else -> "[latestUploadedChapter]=desc"
+			SortOrder.UPDATED -> "%5BlatestUploadedChapter%5D=desc"
+			SortOrder.UPDATED_ASC -> "%5BlatestUploadedChapter%5D=asc"
+			SortOrder.RATING -> "%5Brating%5D=desc"
+			SortOrder.RATING_ASC -> "%5Brating%5D=asc"
+			SortOrder.ALPHABETICAL -> "%5Btitle%5D=asc"
+			SortOrder.ALPHABETICAL_DESC -> "%5Btitle%5D=desc"
+			SortOrder.NEWEST -> "%5Byear%5D=desc"
+			SortOrder.NEWEST_ASC -> "%5Byear%5D=asc"
+			SortOrder.POPULARITY -> "%5BfollowedCount%5D=desc"
+			SortOrder.POPULARITY_ASC -> "%5BfollowedCount%5D=asc"
+			SortOrder.ADDED -> "%5BcreatedAt%5D=desc"
+			SortOrder.ADDED_ASC -> "%5BcreatedAt%5D=asc"
+			SortOrder.RELEVANCE -> "%5Brelevance%5D=desc"
+			else -> "%5BlatestUploadedChapter%5D=desc"
 		}
 
 		else -> this.toString().urlEncoded()
@@ -224,9 +224,11 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 	}
 
 	override suspend fun getList(query: MangaSearchQuery): List<Manga> {
+		// MangaDex can reject raw bracket query keys from manually built URLs;
+		// keep bracketed query parameter names URL-encoded here.
 		val url = buildString {
 			append("https://api.$domain/manga?limit=$PAGE_SIZE&offset=${query.offset}")
-				.append("&includes[]=cover_art&includes[]=author&includes[]=artist&includedTagsMode=AND&excludedTagsMode=OR")
+				.append("&includes%5B%5D=cover_art&includes%5B%5D=author&includes%5B%5D=artist&includedTagsMode=AND&excludedTagsMode=OR")
 
 			var hasContentRating = false
 
@@ -240,7 +242,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 					}
 
 					is Exclude<*> -> {
-						criterion.values.forEach { appendCriterion(criterion.field, it, "excludedTags[]") }
+						criterion.values.forEach { appendCriterion(criterion.field, it, "excludedTags%5B%5D") }
 					}
 
 					is Match<*> -> {
@@ -255,7 +257,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 
 			// If contentRating is not provided, add default values
 			if (!hasContentRating) {
-				append("&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic")
+				append("&contentRating%5B%5D=safe&contentRating%5B%5D=suggestive&contentRating%5B%5D=erotica&contentRating%5B%5D=pornographic")
 			}
 
 			append("&order")
@@ -280,7 +282,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 	private suspend fun getDetails(mangaId: String): Manga = coroutineScope {
 		val jsonDeferred = async {
 			webClient.httpGet(
-				"https://api.$domain/manga/${mangaId}?includes[]=artist&includes[]=author&includes[]=cover_art",
+				"https://api.$domain/manga/${mangaId}?includes%5B%5D=artist&includes%5B%5D=author&includes%5B%5D=cover_art",
 			).parseJson().getJSONObject("data")
 		}
 		val feedDeferred = async { loadChapters(mangaId) }
@@ -450,10 +452,10 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			append("/feed")
 			append("?limit=")
 			append(limitedLimit)
-			append("&includes[]=scanlation_group&order[volume]=asc&order[chapter]=asc")
+			append("&includes%5B%5D=scanlation_group&order%5Bvolume%5D=asc&order%5Bchapter%5D=asc")
 			append("&includeFuturePublishAt=0&includeEmptyPages=0&includeFutureUpdates=0&offset=")
 			append(offset)
-			append("&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic")
+			append("&contentRating%5B%5D=safe&contentRating%5B%5D=suggestive&contentRating%5B%5D=erotica&contentRating%5B%5D=pornographic")
 		}
 		val json = webClient.httpGet(url).parseJson()
 		if (json.getString("result") == "ok") {
@@ -480,7 +482,7 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 		for (jo in list) {
 			val id = jo.getString("id")
 			val attrs = jo.getJSONObject("attributes")
-			if (!attrs.isNull("externalUrl") || attrs.optInt("pages", 0) <= 0) {
+			if (!attrs.isNull("externalUrl") || (attrs.has("pages") && attrs.optInt("pages", 0) <= 0)) {
 				continue
 			}
 			val number = attrs.getFloatOrDefault("chapter", 0f)
