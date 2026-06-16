@@ -504,8 +504,8 @@ internal class MangaDexParser(context: MangaLoaderContext) : FlexibleMangaParser
 			.addQueryParameter("includes[]", "scanlation_group")
 			.addQueryParameter("includes[]", "user")
 			.apply { addTranslatedLanguages() }
-			.addQueryParameter("order[volume]", "desc")
-			.addQueryParameter("order[chapter]", "desc")
+			.addQueryParameter("order[volume]", "asc")
+			.addQueryParameter("order[chapter]", "asc")
 			.addQueryParameter("includeFuturePublishAt", "0")
 			.addQueryParameter("includeEmptyPages", "0")
 			.addQueryParameter("includeFutureUpdates", "0")
