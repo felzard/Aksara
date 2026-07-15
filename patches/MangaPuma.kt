@@ -173,6 +173,7 @@ internal class MangaPuma(context: MangaLoaderContext) :
 					branch = null,
 				)
 			}
+			.sortedBy { it.number } // guarantee ascending order regardless of API/order changes upstream
 	}
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
