@@ -149,31 +149,35 @@ internal class MangaPuma(context: MangaLoaderContext) :
 		)
 	}
 
-	private suspend fun getChapters(mangaId: String): List<MangaChapter> {
-		val root = webClient.httpGet(
-			"https://$API_DOMAIN/titles/$mangaId/chapters?cv=${System.currentTimeMillis()}",
-		).parseJson()
-
-		val chapters = root.optJSONObject("data")?.optJSONArray("chapters") ?: return emptyList()
-
-		return chapters.asTypedList<JSONObject>()
-			.sortedBy { it.getFloatOrDefault("chapter_number", 0f) }
-			.mapChapters { index, jo ->
-				val path = canonicalPath(jo.getStringOrNull("url") ?: return@mapChapters null)
-
-				MangaChapter(
-					id = generateUid(path),
-					title = jo.getStringOrNull("name"),
-					number = jo.getFloatOrDefault("chapter_number", index + 1f),
-					volume = 0,
-					url = path,
-					uploadDate = dateFormat.parseSafe(jo.getStringOrNull("updated_at")),
-					source = source,
-					scanlator = null,
-					branch = null,
-				)
-			}
-	}
+    private suspend fun getChapters(mangaId: String): List<MangaChapter> {
+        val root = webClient.httpGet(
+            "https://$API_DOMAIN/titles/$mangaId/chapters?cv=${System.currentTimeMillis()}",
+        ).parseJson()
+    
+        val chapters = root.optJSONObject("data")?.optJSONArray("chapters") ?: return emptyList()
+    
+        return chapters.asTypedList<JSONObject>()
+            // API returns newest -> oldest, force oldest -> newest
+            .sortedBy { it.getFloatOrDefault("number", 0f) }
+            .mapChapters { _, jo ->
+                val path = canonicalPath(
+                    jo.getStringOrNull("url") ?: return@mapChapters null
+                )
+    
+                MangaChapter(
+                    id = generateUid(path),
+                    title = jo.getStringOrNull("name"),
+                    // New API field
+                    number = jo.getFloatOrDefault("number", 0f),
+                    volume = 0,
+                    url = path,
+                    uploadDate = dateFormat.parseSafe(jo.getStringOrNull("updated_at")),
+                    source = source,
+                    scanlator = null,
+                    branch = null,
+                )
+            }
+    }
 
 	override suspend fun getPages(chapter: MangaChapter): List<MangaPage> {
 		val fullUrl = chapter.url.toAbsoluteUrl(siteDomain)
